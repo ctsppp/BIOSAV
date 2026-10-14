@@ -1,0 +1,682 @@
+---
+title: "Biosav RESULTS"
+author: "Nilda Molina Chacón"
+date: "2026-09-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Configuración global para mantener el reporte limpio
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# EXPLORACIÓN DE BIOSAV RESULTS
+
+En el archivo BIOSAV RESULTS se tienen tres sheet's. 
+Sheet 1 == Empirical (Methods)
+Sheet 2 == Empirical (Graphs)
+Sheet 3 == Empirical (Results)
+Donde cada hoja de excel tiene 0 si aquel método estadístico NO fue implementado por los autores (métodos y/o resultados) y un 1 si es que SÍ fue implementado AL MENOS UNA VEZ. Para los gráficos, es lo mismo, solo que esta vez estaremos viendo si es que existe una relación evidente con los tipos de gráficos v/s los métodos mencionados.
+
+
+## 1. ANÁLISIS DE RESULTS (SHEET = 1)
+
+### Preparamos los datos para que el software pueda leerlos
+
+Como los archivos excel en español tienen separación distinta entre casillas (;), configuramos todo para que la función read nos permita explorar el contenido.
+Luego, guardamos los datos como un data.frame clásico, creamos las categorías de los métodos (familias) para una visualización más específica.
+
+```{r preparación de datos métodos, echo= TRUE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+library(viridis)
+
+cat("=== SELECCIONAR BIOSAV RESULTS (EXCEL) ===\n")
+ruta_archivo <- file.choose()
+
+if (grepl("\\.xlsx?$", ruta_archivo)) {
+  df <- read_excel(ruta_archivo, sheet = 1)
+} else {
+  df <- read.csv(ruta_archivo, sep = ";", check.names = FALSE, fileEncoding = "UTF-8") 
+}
+
+df <- as.data.frame(df)
+rownames(df) <- df[[1]]
+df <- df[, -1]
+
+df_num <- df %>%
+  mutate(across(everything(), ~ suppressWarnings(as.numeric(as.character(.))))) %>%
+  replace(is.na(.), 0)
+
+# Ahora creamos las categorías por familias. 
+# Cada fila de métodos corresponde a las filas de las familias respectivamente.
+
+categorias <- data.frame(
+  Metodo = c(
+    'ANOVA', 'T STUDENT', 'KRUSKALL WALLIS', 'MANN WHITNEY', 'WILCOXON', 'CHI SQUARED TEST',
+    'PERMANOVA', 'ANOSIM', 'BETADIESPER', 'MANTEL TEST',
+    'TUKEY', 'LSD TEST', 'BH',
+    'PCA', 'PCoA', 'NMDS', 'RDA',
+    'SHAPIRO WILK', 'LILLIEFORS', 'LEVENE',
+    'PEARSON', 'SPEARMAN', 'SNA',
+    'SHANNON', 'INVSIMPSON', 'SIMPSON',
+    'GLMM', 'MODELOS BAYESIANOS', 'GWAS', 'WALD TEST',
+    'QIIME', 'DADA2', 'PIPELINE', 'Z SCORE',
+    'DESEQ2', 'LefSE', 'ANCOM BC'
+  ),
+  Familia = c(
+    rep('1. Diferencias Univariadas', 6),
+    rep('2. Hipótesis Multivariada', 4),
+    rep('3. Pruebas Post-hoc', 3),
+    rep('4. Análisis Multivariado', 4),
+    rep('5. Verificación de supuestos', 3),
+    rep('6. Relaciones, correlaciones y redes', 3),
+    rep('7. Índices Biodiversidad', 3),
+    rep('8. Modelamiento Y Genética', 4),
+    rep('9. Herramientas Y Preparación', 4),
+    rep('10. Abundancia Diferencial', 3)
+  )
+)
+```
+
+### Preparamos los datos para poder graficar
+
+#### 1. El gráfico 1: 
+Será un gráfico exploratorio para saber las frecuencias de métodos estadísticos. Mostrará de manera descendiente desde cuáles son los más comunes hasta los menos utilizados en estos 49 papers seleccionados.
+
+#### 2. El gráfico 2: 
+Este gráfico ahora relacionrá las frecuencias con las familias de métodos estadísticos. Es decir, la idea es que para cada barra según la columna de métodos, esta se coloree según la familia o categoría de los métodos.
+
+#### 3. El gráfico 3:
+Es la misma ciencia que el gráfico 3, solo que ahora colorearemos únicamente el top 3 de las familias de métodos estadísticos más usados.
+
+#### 4. El gráfico 4:
+Para este gráfico contaremos en cuántos papers se utilizó AL MENOS uno de los métodos estadísticos de la familia. De esta manera contamos únicamente las familias, evitando repeticiones.
+
+```{r procesamos métodos, echo=TRUE}
+frecuencias_plot <- data.frame(
+  Metodo = colnames(df_num),
+  Frecuencia = colSums(df_num, na.rm = TRUE)
+) %>%
+  filter(Metodo != "Publication Year") %>%
+  filter(Frecuencia > 0) %>%
+  left_join(categorias, by = "Metodo") %>%
+  mutate(Familia = replace_na(Familia, "Otros"))
+
+top_familias <- frecuencias_plot %>%
+  group_by(Familia) %>%
+  summarise(Suma_Total = sum(Frecuencia)) %>%
+  arrange(desc(Suma_Total)) %>%
+  slice(1:3) %>%
+  pull(Familia)
+
+frecuencias_plot <- frecuencias_plot %>%
+  mutate(Familia_Top3 = if_else(Familia %in% top_familias, Familia, "Otras Familias")) %>%
+  arrange(Frecuencia) %>%
+  mutate(Metodo = factor(Metodo, levels = Metodo)) %>%
+  mutate(Familia_Top3 = factor(Familia_Top3, levels = c(top_familias, "Otras Familias")))
+
+frecuencia_familias <- df_num %>%
+  mutate(Paper_ID = rownames(.)) %>%
+  pivot_longer(cols = -Paper_ID, names_to = "Metodo", values_to = "Presencia") %>%
+  filter(Metodo != "Publication Year", Presencia > 0) %>%
+  left_join(categorias, by = "Metodo") %>%
+  mutate(Familia = replace_na(Familia, "Otros")) %>%
+  distinct(Paper_ID, Familia) %>%
+  count(Familia, name = "Frecuencia") %>%
+  arrange(Frecuencia) %>%
+  mutate(Familia = factor(Familia, levels = Familia))
+```
+
+### Generamos gráficos
+
+Finalmente, creamos las visualizaciones
+
+```{r gráficos métodos, echo=TRUE}
+
+# Gráfico 1: Exploratorio 
+mis_colores_degradado <- colorRampPalette(c("coral4", "darkgoldenrod3", "darkolivegreen3"))(nrow(frecuencias_plot))
+
+ggplot(frecuencias_plot, aes(x = Frecuencia, y = Metodo, fill = Metodo)) +
+  geom_col(width = 0.6, show.legend = FALSE) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
+  scale_fill_manual(values = mis_colores_degradado) + 
+  labs(title = "Frecuencia de Métodos Individuales (Métodos)", x = "Número de Papers", y = NULL) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)),
+    panel.grid.major.y = element_blank(), 
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Gráfico 2: Por Familias de métodos
+ggplot(frecuencias_plot, aes(x = Frecuencia, y = Metodo, fill = Familia)) +
+  geom_col(width = 0.8) + 
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold", color = "black") +
+  scale_fill_viridis_d(option = "turbo") + 
+  labs(title = "Frecuencia de Métodos Individuales (Métodos)", subtitle = "Coloreados según familia estadística", x = "Número de Papers", y = NULL) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 12, color = "gray40", margin = margin(b = 10)),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.major.y = element_blank(), # Quitamos líneas de fondo horizontales
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) 
+
+# Gráfico 3: Top 3 Familias de métodos
+mis_colores <- c("darkolivegreen3", "darkgoldenrod3", "coral4", "gainsboro")
+names(mis_colores) <- c(top_familias, "Otras Familias")
+
+ggplot(frecuencias_plot, aes(x = Frecuencia, y = Metodo, fill = Familia_Top3)) +
+  geom_col(width = 0.8) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
+  scale_fill_manual(values = mis_colores) + 
+  labs(title = "Frecuencia de Métodos Estadísticos (Métodos)", subtitle = "Destacando las 3 familias predominantes", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Gráfico 4: ÚNICAMENTE por Familias
+ggplot(frecuencia_familias, aes(x = Frecuencia, y = Familia, fill = Familia)) +
+  geom_col(width = 0.7, show.legend = FALSE) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 3, fontface = "bold") +
+  scale_fill_manual(values = hcl.colors(n = nrow(frecuencia_familias), palette = "YlOrBr", rev = TRUE)) + 
+  labs(title = "Familias Estadísticas en Métodos", subtitle = "Inserción única", x = "Número de Papers", y = NULL) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+## 2. ANÁLISIS DE RESULTS (SHEET = 3)
+
+### Preparamos los datos para los resultados
+
+Ahora la idea es que se lea únicamente la hoja n°3, donde nuevamente indicamos todo lo necesario y creamos el data.frame clásico. Además, también creamos familias de métodos estadísticos, similar a lo que se hizo anteriormente para lo observado en la sección de métodos.
+
+La idea aquí también es obtener los mismos gráficos que en la sheet 1; es decir:
+
+#### 1. El gráfico 1: 
+Será un gráfico exploratorio para saber las frecuencias de métodos estadísticos esta vez en los resultados. Mostrará de manera descendiente desde cuáles son los más comunes hasta los menos utilizados en estos 49 papers seleccionados.
+
+#### 2. El gráfico 2: 
+Este gráfico ahora relacionrá las frecuencias con las familias de métodos estadísticos. Es decir, la idea es que para cada barra según la columna de métodos, esta se coloree según la familia o categoría de los métodos.
+
+#### 3. El gráfico 3:
+Es la misma ciencia que el gráfico 3, solo que ahora colorearemos únicamente el top 3 de las familias de métodos estadísticos más usados.
+
+#### 4. El gráfico 4:
+Para este gráfico contaremos en cuántos papers se utilizó AL MENOS uno de los métodos estadísticos de la familia. De esta manera contamos únicamente las familias, evitando repeticiones.
+
+```{r preparación para resultados, echo=TRUE}
+if (grepl("\\.xlsx?$", ruta_archivo)) {
+  df_res <- read_excel(ruta_archivo, sheet = 3)
+} else {
+  df_res <- read.csv(ruta_archivo, sep = ";", check.names = FALSE, fileEncoding = "UTF-8") 
+}
+
+df_res <- as.data.frame(df_res)
+rownames(df_res) <- df_res[[1]]
+df_res <- df_res[, -1]
+
+df_num_res <- df_res %>%
+  mutate(across(everything(), ~ suppressWarnings(as.numeric(as.character(.))))) %>%
+  replace(is.na(.), 0)
+
+categorias_res <- data.frame(
+  Metodo = c(
+    'ANOVA', 'KRUSKALL WALLIS', 'WILCOXON', 'T STUDENT', 'CHI SQUARED', 'MANN WHITNEY',
+    'PERMANOVA', 'BETADISPER', 'ANOSIM', 'MANTEL TEST',
+    'TUKEY', 'FDR', 'DUNN', 'LSD TEST', 'HOLM SIDAK',
+    'PCoA', 'NMDS', 'PCA', 'RDA',
+    'SNA', 'SPEARMAN', 'PEARSON',
+    'ENS',
+    'MODELOS BAYESIANOS', 'RMSE', 'AIC', 'K FOLD', 'LIKELIHOOD TEST', 'WALD TEST', 'GWAS', 'PAV', 'GLMM',
+    'BLAST N', 'RMT', 'Sloan NCM', 'QIIME',
+    'ANCOM BC', 'LefSE'
+  ),
+  Familia = c(
+    rep('1. Diferencias Univariadas', 6),
+    rep('2. Hipótesis Multivariada', 4),
+    rep('3. Pruebas Post-hoc', 5),
+    rep('4. Análisis Multivariado', 4),
+    rep('6. Relaciones, correlaciones y redes', 3),
+    rep('7. Índices Biodiversidad', 1),
+    rep('8. Modelamiento Y Genética', 9),
+    rep('9. Herramientas Y Preparación', 4),
+    rep('10. Abundancia Diferencial', 2)
+  )
+)
+
+frecuencias_plot_res <- data.frame(
+  Metodo = colnames(df_num_res),
+  Frecuencia = colSums(df_num_res, na.rm = TRUE)
+) %>%
+  filter(Frecuencia > 0) %>%
+  left_join(categorias_res, by = "Metodo") %>%
+  mutate(Familia = replace_na(Familia, "Otros"))
+
+top_familias_res <- frecuencias_plot_res %>%
+  group_by(Familia) %>%
+  summarise(Suma_Total = sum(Frecuencia)) %>%
+  arrange(desc(Suma_Total)) %>%
+  slice(1:3) %>%
+  pull(Familia)
+
+frecuencias_plot_res <- frecuencias_plot_res %>%
+  mutate(Familia_Top3 = if_else(Familia %in% top_familias_res, Familia, "Otras Familias")) %>%
+  arrange(Frecuencia) %>%
+  mutate(Metodo = factor(Metodo, levels = Metodo)) %>%
+  mutate(Familia_Top3 = factor(Familia_Top3, levels = c(top_familias_res, "Otras Familias")))
+
+frecuencia_familias_res <- df_num_res %>%
+  mutate(Paper_ID = rownames(.)) %>%
+  pivot_longer(cols = -Paper_ID, names_to = "Metodo", values_to = "Presencia") %>%
+  filter(Presencia > 0) %>%
+  left_join(categorias_res, by = "Metodo") %>%
+  mutate(Familia = replace_na(Familia, "Otros")) %>%
+  distinct(Paper_ID, Familia) %>%
+  count(Familia, name = "Frecuencia") %>%
+  arrange(Frecuencia) %>%
+  mutate(Familia = factor(Familia, levels = Familia))
+```
+
+### Graficamos ahora los resultados
+
+```{r graficos de resultados, echo=TRUE}
+
+# Grafico 1: Exploratorio por frecuencias 
+mis_colores_degradado_res <- colorRampPalette(c("coral4", "darkgoldenrod3", "darkolivegreen3"))(nrow(frecuencias_plot_res))
+
+ggplot(frecuencias_plot_res, aes(x = Frecuencia, y = Metodo, fill = Metodo)) +
+  geom_col(width = 0.6, show.legend = FALSE) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
+  scale_fill_manual(values = mis_colores_degradado_res) + 
+  labs(title = "Frecuencia de Métodos Individuales (Resultados)", x = "Número de Papers", y = NULL) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)),
+    panel.grid.major.y = element_blank(), 
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Gráfico 2: Por Familias de métodos
+ggplot(frecuencias_plot_res, aes(x = Frecuencia, y = Metodo, fill = Familia)) +
+  geom_col(width = 0.8) + 
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold", color = "black") +
+  scale_fill_viridis_d(option = "turbo") + 
+  labs(title = "Frecuencia de Métodos Individuales (Resultados)", subtitle = "Coloreados según familia", x = "Número de Papers", y = NULL, fill = "Familias") +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "gray40", margin = margin(b = 10)),
+    legend.position = "right",
+    legend.title = element_text(face = "bold", size = 10),
+    panel.grid.major.y = element_blank(), 
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) 
+
+# Gráfico 3: Top 3 Familias
+mis_colores_res <- c("darkolivegreen3", "darkgoldenrod3", "coral4", "gainsboro")
+names(mis_colores_res) <- c(top_familias_res, "Otras Familias")
+
+ggplot(frecuencias_plot_res, aes(x = Frecuencia, y = Metodo, fill = Familia_Top3)) +
+  geom_col(width = 0.8) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
+  scale_fill_manual(values = mis_colores_res) + 
+  labs(title = "Frecuencia de Métodos (Resultados)", subtitle = "Destacando el Top 3", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# 4. Gráfico 4: Solo Familias 
+ggplot(frecuencia_familias_res, aes(x = Frecuencia, y = Familia, fill = Familia)) +
+  geom_col(width = 0.7, show.legend = FALSE) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 3, fontface = "bold") +
+  scale_fill_manual(values = hcl.colors(n = nrow(frecuencia_familias_res), palette = "YlOrBr", rev = TRUE)) + 
+  labs(title = "Familias Estadísticas en Resultados", subtitle = "Inserción única", x = "Número de Papers", y = NULL) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)),
+    panel.grid.major.y = element_blank()
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+## 3. ANÁLISIS DE GRÁFICOS (SHEET = 2)
+
+En esta sección exploraremos los tipos de gráficos utilizados por los autores para reportar sus observaciones, extrayendo la información de la segunda hoja del documento excel.
+
+### Preparación y cálculos
+
+Ahora, nuevamente preparamos el excel, lo convertimos en data.frame y definimos las familias de los gáficos para visualizar las preferencias de la literatura.
+Luego, hacemos los cálculos y definiciones necesarias para poder tener nuevamente los 4 gráficos pero para la sección de gráficos dentro de los papers.
+
+#### 1. El gráfico 1: 
+Será un gráfico exploratorio para saber las frecuencias de los tipos de gráficos usados por los autores.
+
+#### 2. El gráfico 2: 
+Este gráfico ahora relacionrá las frecuencias con las familias de los gráficos.
+
+#### 3. El gráfico 3:
+Es la misma ciencia que el gráfico 3, solo que ahora colorearemos únicamente el top 3.
+
+#### 4. El gráfico 4:
+Para este gráfico contaremos en cuántos papers se utilizó AL MENOS uno de los gráficos clasificados en las familias.
+
+```{r preparación para sección de gráficos, echo=TRUE}
+
+if (grepl("\\.xlsx?$", ruta_archivo)) {
+  df_graficos <- read_excel(ruta_archivo, sheet = 2)
+} else {
+  df_graficos <- read.csv(ruta_archivo, sep = ";", check.names = FALSE, fileEncoding = "UTF-8") 
+}
+
+df_graficos <- as.data.frame(df_graficos)
+rownames(df_graficos) <- df_graficos[[1]]
+df_graficos <- df_graficos[, -1]
+
+df_num_graficos <- df_graficos %>%
+  mutate(across(everything(), ~ suppressWarnings(as.numeric(as.character(.))))) %>%
+  replace(is.na(.), 0)
+
+# Definimos las familias de gráficos 
+categorias_graficos <- data.frame(
+  Tipo_Grafico = c(
+    'BOXPLOT', 'SIDE-BY-SIDE BOXPLOT', 'VIOLIN PLOT', 'DENSITY PLOT', 'HISTOGRAM', 'STRIP PLOT', 'JITTER PLOT',
+    'BAR CHART WITH ERROR', 'BAR CHART SIMPLE', 'LINE CHART', 'LINE CHART WITH ERROR', 'SCATTER PLOT SIMPLE', 'REGRESSION PLOT', 'CLEVELAND DOT POINT',
+    'PCOA SCATTERPLOT', 'PCA SCATTERPLOT', 'NMDS PLOT', 'db-RDA',
+    'STACKED BAR CHART', 'SANKEY PLOT', 'PIE CHART', 'BUBBLE CHART',
+    'HEATMAP', 'CLUSTERED HEATMAP', 'DENDROGRAM', 'CIRCULAR DENDROGRAM', 'MAXIMUM LIKELIHOOD TREES',
+    'CO-OCCURRENCE NETWORK', 'ZIPI PLOT', 'VENN DIAGRAM', 'UPSET PLOT',
+    'LDA SCORE PLOT', 'MANHATTAN PLOT', 'MA PLOT', 'VOLCANO PLOT'
+  ),
+  Familia = c(
+    rep('1. Distribución y Dispersión', 7),
+    rep('2. Comparaciones y Tendencias', 7),
+    rep('3. Ordenación Multivariada', 4),
+    rep('4. Composición Comunitaria', 4),
+    rep('5. Agrupamiento y Redes', 9),
+    rep('6. Biomarcadores y Genómica', 4)
+  )
+)
+
+#  Cálculos de frecuencias base y unión con familias
+frecuencias_plot_graficos <- data.frame(
+  Tipo_Grafico = colnames(df_num_graficos),
+  Frecuencia = colSums(df_num_graficos, na.rm = TRUE)
+) %>%
+  filter(Tipo_Grafico != "Publication Year", Frecuencia > 0) %>%
+  left_join(categorias_graficos, by = "Tipo_Grafico") %>%
+  mutate(Familia = replace_na(Familia, "Otros"))
+
+# Cálculo del Top 3 familias
+top_familias_graf <- frecuencias_plot_graficos %>%
+  group_by(Familia) %>%
+  summarise(Suma_Total = sum(Frecuencia)) %>%
+  arrange(desc(Suma_Total)) %>%
+  slice(1:3) %>%
+  pull(Familia)
+
+frecuencias_plot_graficos <- frecuencias_plot_graficos %>%
+  mutate(Familia_Top3 = if_else(Familia %in% top_familias_graf, Familia, "Otras Familias")) %>%
+  arrange(Frecuencia) %>%
+  mutate(Tipo_Grafico = factor(Tipo_Grafico, levels = Tipo_Grafico)) %>%
+  mutate(Familia_Top3 = factor(Familia_Top3, levels = c(top_familias_graf, "Otras Familias")))
+
+# Cálculo para gráfico por familia
+frecuencia_familias_graf <- df_num_graficos %>%
+  mutate(Paper_ID = rownames(.)) %>%
+  pivot_longer(cols = -Paper_ID, names_to = "Tipo_Grafico", values_to = "Presencia") %>%
+  filter(Tipo_Grafico != "Publication Year", Presencia > 0) %>%
+  left_join(categorias_graficos, by = "Tipo_Grafico") %>%
+  mutate(Familia = replace_na(Familia, "Otros")) %>%
+  distinct(Paper_ID, Familia) %>%
+  count(Familia, name = "Frecuencia") %>%
+  arrange(Frecuencia) %>%
+  mutate(Familia = factor(Familia, levels = Familia))
+
+```
+
+#### Visualizaciones
+
+```{r visualizaciones para tipos de graficos, echo=TRUE}
+
+# 1. Gráfico 1: Frecuencias por tipo de gráfico
+mis_colores_graficos <- colorRampPalette(c("coral4", "darkgoldenrod3", "darkolivegreen3"))(nrow(frecuencias_plot_graficos))
+
+ggplot(frecuencias_plot_graficos, aes(x = Frecuencia, y = Tipo_Grafico, fill = Tipo_Grafico)) +
+  geom_col(width = 0.6, show.legend = FALSE) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2.5, fontface = "bold") +
+  scale_fill_manual(values = mis_colores_graficos) + 
+  labs(title = "Frecuencia de Tipos de Gráficos (Observaciones)", subtitle = "Preferencia de visualización de datos en la literatura", x = "Número de Papers", y = "Tipos de Gráficos") +
+  theme_minimal(base_size = 9) +
+  theme(plot.title = element_text(face = "bold", size = 14), plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)), panel.grid.major.y = element_blank(), panel.grid.minor = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# 2. Gráfico 2: Frecuencias coloreados por Familia
+ggplot(frecuencias_plot_graficos, aes(x = Frecuencia, y = Tipo_Grafico, fill = Familia)) +
+  geom_col(width = 0.8) + 
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2.5, fontface = "bold", color = "black") +
+  scale_fill_viridis_d(option = "turbo") + 
+  labs(title = "Frecuencia de Tipos de Gráficos (Observaciones)", subtitle = "Coloreados según familia de visualización", x = "Número de Papers", y = NULL, fill = "Familias de Gráficos") +
+  theme_minimal(base_size = 9) +
+  theme(plot.title = element_text(face = "bold", size = 14), plot.subtitle = element_text(size = 11, color = "gray40", margin = margin(b = 15)), legend.position = "right", legend.title = element_text(face = "bold", size = 10), panel.grid.major.y = element_blank(), panel.grid.minor = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) 
+
+# 3. Gráfico 3: Top 3 Familias de gráficos
+mis_colores_graf <- c("darkolivegreen3", "darkgoldenrod3", "coral4", "gainsboro")
+names(mis_colores_graf) <- c(top_familias_graf, "Otras Familias")
+
+ggplot(frecuencias_plot_graficos, aes(x = Frecuencia, y = Tipo_Grafico, fill = Familia_Top3)) +
+  geom_col(width = 0.8) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2.5, fontface = "bold") +
+  scale_fill_manual(values = mis_colores_graf) + 
+  labs(title = "Frecuencia de Tipos de Gráficos", subtitle = "Destacando las 3 familias de visualización predominantes", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
+  theme_minimal(base_size = 9) +
+  theme(plot.title = element_text(face = "bold", size = 14), plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)), panel.grid.major.y = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# 4. Gráfico 4: Solo Familias
+ggplot(frecuencia_familias_graf, aes(x = Frecuencia, y = Familia, fill = Familia)) +
+  geom_col(width = 0.7, show.legend = FALSE) +  
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 3, fontface = "bold") +
+  scale_fill_manual(values = hcl.colors(n = nrow(frecuencia_familias_graf), palette = "YlOrBr", rev = TRUE)) + 
+  labs(title = "Familias de Visualización en Observaciones", subtitle = "Inserción de papers que utilizan al menos un gráfico del grupo", x = "Número de Papers", y = NULL) +
+  theme_minimal(base_size = 10) +
+  theme(plot.title = element_text(face = "bold", size = 14), plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)), panel.grid.major.y = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+# Análisis MCA
+
+Este es solo un análisis MCA para la SHEET=1
+
+```{r analisis mca, echo=TRUE, fig.show="hold"}
+
+library(FactoMineR)
+library(factoextra)
+
+# Preparación de datos: Convertir la matriz binaria a factores
+df_mca_metodos <- df_num %>%
+  mutate(across(everything(), ~ as.factor(ifelse(. == 1, "Presente", "Ausente"))))
+
+# Ejecutamos el cálculo del MCA
+modelo_mca <- MCA(df_mca_metodos, graph = FALSE)
+
+# 1. Visualización 1: El mapa de las variables (Métodos Estadísticos)
+# Muestra qué métodos tienden a usarse juntos (clústeres analíticos)
+plot_metodos_mca <- fviz_mca_var(modelo_mca, 
+                                 choice = "var.cat",
+                                 repel = TRUE, # Evita que los textos se sobrepongan
+                                 col.var = "contrib", # Coloreamos según peso
+                                 gradient.cols = c("gray80", "darkgoldenrod3", "coral4"),
+                                 title = "Biplot MCA: Asociación de Métodos Estadísticos") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+print(plot_metodos_mca)
+
+# 2. Visualización 2: El mapa de los individuos (Los 49 Papers)
+# Muestra si los artículos se dividen en "escuelas" de análisis distintas
+plot_papers_mca <- fviz_mca_ind(modelo_mca, 
+                                repel = TRUE,
+                                col.ind = "cos2", # Coloreamos por calidad de representación
+                                gradient.cols = c("gray80", "darkolivegreen3", "coral4"),
+                                title = "Biplot MCA: Segmentación de los Papers") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+print(plot_papers_mca)
+```
+
+Ahora un MCA cruzado para la SHEET = 1 y la SHEET = 3
+
+```{r mca_cruzado_metodos_resultados, echo=TRUE, fig.show="hold", fig.width=12, fig.height=10}
+# Cargar librerías necesarias
+library(FactoMineR)
+library(factoextra)
+library(dplyr)
+library(tibble)
+
+# Agregamos prefijos para no confundir métodos declarados vs resultados reportados
+df_metodos_mca <- df_num %>%
+  rename_with(~ paste0("Met_", .)) %>%
+  rownames_to_column("Paper_ID")
+
+df_resultados_mca <- df_num_res %>%
+  rename_with(~ paste0("Res_", .)) %>%
+  rownames_to_column("Paper_ID")
+
+# Matriz cruzada a través de la ID del paper
+df_super_matriz <- inner_join(df_metodos_mca, df_resultados_mca, by = "Paper_ID") %>%
+  column_to_rownames("Paper_ID")
+
+# Categorizamos los datos
+df_super_mca <- df_super_matriz %>%
+  mutate(across(everything(), ~ as.factor(ifelse(. == 1, "Presente", "Ausente"))))
+
+# MCA
+# Guardamos solo las 5 primeras dimensiones para mayor rapidez
+modelo_mca_cruzado <- MCA(df_super_mca, ncp = 5, graph = FALSE)
+
+# Excluimos las etiquetas de "Ausente" para no saturar el gráfico y ver solo lo que SÍ se conectó
+plot_mca_cruzado <- fviz_mca_var(modelo_mca_cruzado, 
+                                 choice = "var.cat",
+                                 invisible = "ind", # Oculta los papers
+                                 select.var = list(name = NULL, cos2 = 0.1), # Filtramos para no saturar
+                                 repel = TRUE,
+                                 col.var = "contrib", 
+                                 gradient.cols = c("gray80", "darkgoldenrod3", "coral4"),
+                                 title = "MCA Cruzado: ¿Qué métodos declarados predicen qué resultados?") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+print(plot_mca_cruzado)
+
+```
+
+Y el complementario por papers
+
+```{r mca_cruzado_papers, echo=TRUE, fig.width=10, fig.height=8}
+# Generamos el mapa de individuos (Papers) a partir del modelo cruzado
+plot_papers_cruzado <- fviz_mca_ind(modelo_mca_cruzado, 
+                                    repel = TRUE, # Evita que los números de los papers se superpongan
+                                    col.ind = "cos2", # Colorea por calidad de representación
+                                    gradient.cols = c("gray80", "darkolivegreen3", "coral4"),
+                                    title = "MCA Cruzado: Segmentación de Papers (Flujo Completo)",
+                                    subtitle = "Agrupamiento de artículos basado en sus métodos declarados y resultados reportados") +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", margin = margin(b = 10))
+  )
+
+print(plot_papers_cruzado)
+```
+
+# Análisis de BRECHAS
+
+Ahora verificamos proporción de papers para comparar si los métodos reportados en métodos necesariamente se intersectan eventualmente con los métodos reportados en resultados.
+
+```{r analisis de brechas, echo=TRUE, fig.width=10, fig.height=8}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+#  Transformamos las matrices para cruzarlas
+df_metodos_largo <- df_num %>%
+  mutate(Paper_ID = rownames(.)) %>%
+  pivot_longer(cols = -Paper_ID, names_to = "Metodo", values_to = "En_Metodo")
+
+df_res_largo <- df_num_res %>%
+  mutate(Paper_ID = rownames(.)) %>%
+  pivot_longer(cols = -Paper_ID, names_to = "Metodo", values_to = "En_Resultado")
+# Unimos los datos para comparar directamente por Paper y Método
+df_brechas <- full_join(df_metodos_largo, df_res_largo, by = c("Paper_ID", "Metodo")) %>%
+  replace(is.na(.), 0) # Llenar con 0 si un método existe en una hoja pero no en la otra
+
+# Clasificamos tipo de reporte
+df_clasificacion <- df_brechas %>%
+  mutate(
+    Estado = case_when(
+      En_Metodo == 1 & En_Resultado == 1 ~ "1. Coherente (Declarado y Reportado)",
+      En_Metodo == 1 & En_Resultado == 0 ~ "2. Deserción (Declarado, pero omitido en resultados)",
+      En_Metodo == 0 & En_Resultado == 1 ~ "3. Fantasma (No declarado, pero aparece en resultados)",
+      TRUE ~ "No usado"
+    )
+  ) %>%
+  filter(Estado != "No usado") 
+
+# Resumimos frecuencias para visualizar
+resumen_brechas <- df_clasificacion %>%
+  count(Metodo, Estado) %>%
+  group_by(Metodo) %>%
+  mutate(Total_Apariciones = sum(n)) %>%
+  ungroup() %>%
+  filter(Total_Apariciones >= 3) # Ocultamos m+etodos usados menos de 3 veces para evitar saturación
+
+# Generamos gráfico de brecha
+ggplot(resumen_brechas, aes(x = n, y = reorder(Metodo, Total_Apariciones), fill = Estado)) +
+  geom_bar(stat = "identity", position = "fill", color = "white", width = 0.8) + 
+  scale_fill_manual(values = c("1. Coherente (Declarado y Reportado)" = "darkolivegreen3",
+                               "2. Deserción (Declarado, pero omitido en resultados)" = "darkgoldenrod3",
+                               "3. Fantasma (No declarado, pero aparece en resultados)" = "coral4")) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Análisis de Coherencia y Brechas Metodológicas",
+    subtitle = "Proporción de transparencia en el reporte de métodos estadísticos",
+    x = "Porcentaje de Casos (%)",
+    y = "Método Estadístico",
+    fill = "Estado del Reporte:"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom",
+    legend.direction = "vertical",
+    legend.title = element_text(face = "bold"),
+    panel.grid.major.y = element_blank()
+  )
+```
