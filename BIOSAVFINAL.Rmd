@@ -56,7 +56,7 @@ df_num <- df %>%
 categorias <- data.frame(
   Metodo = c(
     'ANOVA', 'T STUDENT', 'KRUSKALL WALLIS', 'MANN WHITNEY', 'WILCOXON', 'CHI SQUARED TEST',
-    'PERMANOVA', 'ANOSIM', 'BETADIESPER', 'MANTEL TEST',
+    'PERMANOVA', 'ANOSIM', 'BETADISPER', 'MANTEL TEST',
     'TUKEY', 'LSD TEST', 'BH',
     'PCA', 'PCoA', 'NMDS', 'RDA',
     'SHAPIRO WILK', 'LILLIEFORS', 'LEVENE',
@@ -178,7 +178,7 @@ ggplot(frecuencias_plot, aes(x = Frecuencia, y = Metodo, fill = Familia_Top3)) +
   geom_col(width = 0.8) +  
   geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
   scale_fill_manual(values = mis_colores) + 
-  labs(title = "Frecuencia de Métodos Estadísticos (Métodos)", subtitle = "Destacando las 3 familias predominantes", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
+  labs(title = "Frecuencia de Métodos Estadísticos (Métodos)", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
   theme_minimal(base_size = 8) +
   theme(
     plot.title = element_text(face = "bold", size = 14),
@@ -341,7 +341,7 @@ ggplot(frecuencias_plot_res, aes(x = Frecuencia, y = Metodo, fill = Familia_Top3
   geom_col(width = 0.8) +  
   geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
   scale_fill_manual(values = mis_colores_res) + 
-  labs(title = "Frecuencia de Métodos (Resultados)", subtitle = "Destacando el Top 3", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
+  labs(title = "Frecuencia de Métodos (Resultados)", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
   theme_minimal(base_size = 8) +
   theme(
     plot.title = element_text(face = "bold", size = 14),
@@ -471,10 +471,13 @@ ggplot(frecuencias_plot_graficos, aes(x = Frecuencia, y = Tipo_Grafico, fill = T
   geom_col(width = 0.6, show.legend = FALSE) +  
   geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2.5, fontface = "bold") +
   scale_fill_manual(values = mis_colores_graficos) + 
-  labs(title = "Frecuencia de Tipos de Gráficos (Observaciones)", subtitle = "Preferencia de visualización de datos en la literatura", x = "Número de Papers", y = "Tipos de Gráficos") +
+  labs(title = "Frecuencia de Tipos de Gráficos (Observaciones)", x = "Número de Papers", y = "Tipos de Gráficos") +
   theme_minimal(base_size = 9) +
   theme(plot.title = element_text(face = "bold", size = 14), plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)), panel.grid.major.y = element_blank(), panel.grid.minor = element_blank()) +
   scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# 1.1. Gráfico 1.1: Frecuencias por tipo de gráfico TRUNCADO AL TOP 3
+
 
 # 2. Gráfico 2: Frecuencias coloreados por Familia
 ggplot(frecuencias_plot_graficos, aes(x = Frecuencia, y = Tipo_Grafico, fill = Familia)) +
@@ -492,9 +495,9 @@ names(mis_colores_graf) <- c(top_familias_graf, "Otras Familias")
 
 ggplot(frecuencias_plot_graficos, aes(x = Frecuencia, y = Tipo_Grafico, fill = Familia_Top3)) +
   geom_col(width = 0.8) +  
-  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2.5, fontface = "bold") +
+  geom_text(aes(label = Frecuencia), hjust = -0.3, size = 2, fontface = "bold") +
   scale_fill_manual(values = mis_colores_graf) + 
-  labs(title = "Frecuencia de Tipos de Gráficos", subtitle = "Destacando las 3 familias de visualización predominantes", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
+  labs(title = "Frecuencia de Tipos de Gráficos", x = "Número de Papers", y = NULL, fill = "Top 3 Familias") +
   theme_minimal(base_size = 9) +
   theme(plot.title = element_text(face = "bold", size = 14), plot.subtitle = element_text(color = "gray40", margin = margin(b = 10)), panel.grid.major.y = element_blank()) +
   scale_x_continuous(expand = expansion(mult = c(0, 0.1)))
@@ -597,12 +600,58 @@ print(plot_mca_cruzado)
 
 ```
 
+# Top contribuyentes
+
+```{r mca cruzado top contribuyentes, echo=TRUE, fig.show="hold", fig.width=12, fig.height=10}
+
+library(FactoMineR)
+library(factoextra)
+library(dplyr)
+library(tibble)
+
+# Agregamos prefijos métodos declarados vs resultados reportados
+df_metodos_mca <- df_num %>%
+  rename_with(~ paste0("Met_", .)) %>%
+  rownames_to_column("Paper_ID")
+
+df_resultados_mca <- df_num_res %>%
+  rename_with(~ paste0("Res_", .)) %>%
+  rownames_to_column("Paper_ID")
+
+# Matriz cruzada
+df_super_matriz <- inner_join(df_metodos_mca, df_resultados_mca, by = "Paper_ID") %>%
+  column_to_rownames("Paper_ID")
+
+# Categorizamos los datos
+df_super_mca <- df_super_matriz %>%
+  mutate(across(everything(), ~ as.factor(ifelse(. == 1, "Presente", "Ausente"))))
+
+# MCA
+modelo_mca_cruzado <- MCA(df_super_mca, ncp = 5, graph = FALSE)
+
+plot_mca_cruzado <- fviz_mca_var(modelo_mca_cruzado, 
+                                 choice = "var.cat",
+                                 invisible = "ind", 
+                                 # 1. Mostrar SOLO el Top 25 de variables que más contribuyen al modelo
+                                 select.var = list(contrib = 25), 
+                                 repel = TRUE,
+                                 # 2. Aumentar el tamaño del texto para mayor legibilidad
+                                 labelsize = 5,
+                                 col.var = "contrib", 
+                                 gradient.cols = c("gray60", "darkgoldenrod3", "coral4"),
+                                 title = "MCA Cruzado: Principales métodos que predicen resultados") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold", size = 16))
+
+print(plot_mca_cruzado)
+```
+
 Y el complementario por papers
 
-```{r mca_cruzado_papers, echo=TRUE, fig.width=10, fig.height=8}
+```{r mca cruzado papers, echo=TRUE, fig.width=10, fig.height=8}
 # Generamos el mapa de individuos (Papers) a partir del modelo cruzado
 plot_papers_cruzado <- fviz_mca_ind(modelo_mca_cruzado, 
-                                    repel = TRUE, # Evita que los números de los papers se superpongan
+                                    repel = TRUE,
                                     col.ind = "cos2", # Colorea por calidad de representación
                                     gradient.cols = c("gray80", "darkolivegreen3", "coral4"),
                                     title = "MCA Cruzado: Segmentación de Papers (Flujo Completo)",
@@ -666,14 +715,13 @@ ggplot(resumen_brechas, aes(x = n, y = reorder(Metodo, Total_Apariciones), fill 
   scale_x_continuous(labels = scales::percent_format()) +
   labs(
     title = "Análisis de Coherencia y Brechas Metodológicas",
-    subtitle = "Proporción de transparencia en el reporte de métodos estadísticos",
     x = "Porcentaje de Casos (%)",
     y = "Método Estadístico",
     fill = "Estado del Reporte:"
   ) +
   theme_minimal(base_size = 11) +
   theme(
-    plot.title = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 15),
     legend.position = "bottom",
     legend.direction = "vertical",
     legend.title = element_text(face = "bold"),
